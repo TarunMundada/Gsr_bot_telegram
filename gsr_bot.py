@@ -107,6 +107,63 @@ def compute_metrics(history, current_gsr):
         "pct_change_30d": round(pct_change_30d, 2)
     }
 
+def build_message(data, metrics, alert_header=None):
+    """Constructs the comprehensive, visually organized Telegram message."""
+    z_val = metrics["z_score"]
+    
+    # Dynamic Signal Mapping
+    if isinstance(z_val, (int, float)):
+        if z_val >= GSR_Z:
+            signal_title = "🔴 SHORT GSR / FAVOR SILVER"
+            status_text = f"Extreme Upper Bound (+{z_val}σ)"
+            action_text = (
+                "• Bullion Shift: Accumulate Silver / Pause Gold buying\n"
+                "• Swap Strategy: High ratio favors converting Gold ➔ Silver\n"
+                "• Pair Trade Bias: Short Gold / Long Silver (MCX Spread)"
+            )
+        elif z_val <= -GSR_Z:
+            signal_title = "🟢 LONG GSR / FAVOR GOLD"
+            status_text = f"Extreme Lower Bound ({z_val}σ)"
+            action_text = (
+                "• Bullion Shift: Accumulate Gold / Pause Silver buying\n"
+                "• Swap Strategy: Low ratio favors converting Silver ➔ Gold\n"
+                "• Pair Trade Bias: Long Gold / Short Silver (MCX Spread)"
+            )
+        else:
+            signal_title = "⚪ NEUTRAL MARKET RANGE"
+            status_text = f"Normal Fluctuation ({z_val}σ)"
+            action_text = "• Strategy: Maintain baseline DCA / No extreme skew"
+    else:
+        signal_title = "⚪ INITIALIZING METRICS"
+        status_text = "Building History..."
+        action_text = "• Awaiting sufficient historical data."
+
+    gold_per_gram = data["gold_inr_10g"] / 10
+    silver_per_gram = data["silver_inr_1kg"] / 1000
+
+    header_block = f"🚨 *{alert_header}* 🚨\n───────────────────────────────\n" if alert_header else "🚨 *GSR RELATIVE VALUE ALERT* 🚨\n───────────────────────────────\n"
+
+    msg = (
+        f"{header_block}"
+        f"Signal: *{signal_title}*\n"
+        f"Status: {status_text}\n\n"
+        f"📊 *RATIO OVERVIEW*\n"
+        f"• GSR Ratio: `{data['gsr']}`\n"
+        f"• 30D Momentum: `{metrics['pct_change_30d']}%`\n"
+        f"• 60-Day Z-Score: `{metrics['z_score']}`\n\n"
+        f"📈 *HISTORICAL POSITIONING*\n"
+        f"• 1-Yr Percentile: `{metrics['percentile']}%`\n\n"
+        f"💰 *LIVE SPOT PRICES (INR)*\n"
+        f"• Gold (24K, 10g): ₹{data['gold_inr_10g']:,} (`₹{gold_per_gram:.2f}/g`)\n"
+        f"• Silver (1kg): ₹{data['silver_inr_1kg']:,} (`₹{silver_per_gram:.2f}/g`)\n"
+        f"• USD/INR: ₹{data['usd_inr']}\n\n"
+        f"💡 *TRADING IMPLICATIONS*\n"
+        f"{action_text}\n"
+        f"───────────────────────────────\n"
+        f"📅 {data['date']}"
+    )
+    return msg
+
 def run_bot(mode):
     data = fetch_market_data()
     history = update_history()
@@ -118,47 +175,39 @@ def run_bot(mode):
         
     metrics = compute_metrics(history, data["gsr"])
     
-    msg = (
-        f"📊 *Gold/Silver Ratio Summary ({data['date']})*\n\n"
-        f"• *GSR Ratio:* `{data['gsr']}`\n"
-        f"• *Gold (24K, 10g):* ₹{data['gold_inr_10g']:,}\n"
-        f"• *Silver (1kg):* ₹{data['silver_inr_1kg']:,}\n"
-        f"• *USD/INR:* ₹{data['usd_inr']}\n\n"
-        f"📈 *Analytics:*\n"
-        f"• 60-Day Z-Score: `{metrics['z_score']}`\n"
-        f"• 1-Yr Percentile: `{metrics['percentile']}%`\n"
-        f"• 30-Day Change: `{metrics['pct_change_30d']}%`"
-    )
-    
     if mode == "test":
         print("Test run completed. Sending message to Telegram...")
         success = send_telegram_message("🔔 *GSR Bot Test Message*\nConnection successful!")
-        print("Telegram delivery:" if success else "Failed to send Telegram message.")
-        print("\n" + msg)
+        print("Telegram delivery successful!" if success else "Failed to send Telegram message.")
+        test_msg = build_message(data, metrics, alert_header="TEST RUN SUMMARY")
+        print("\n" + test_msg)
     
     elif mode == "daily":
+        msg = build_message(data, metrics)
         send_telegram_message(msg)
         
     elif mode == "check":
-        # Check trigger logic for custom alerts
         prev_gsr = list(history.values())[-2] if len(history) > 1 else data["gsr"]
         day_move = abs(((data["gsr"] - prev_gsr) / prev_gsr) * 100)
         
         alerts = []
         if data["gsr"] >= GSR_HIGH:
-            alerts.append(f"⚠️ HIGH GSR ALERT: {data['gsr']} >= {GSR_HIGH} (Silver cheap)")
+            alerts.append(f"HIGH GSR: {data['gsr']} >= {GSR_HIGH}")
         elif data["gsr"] <= GSR_LOW:
-            alerts.append(f"⚠️ LOW GSR ALERT: {data['gsr']} <= {GSR_LOW} (Silver expensive)")
+            alerts.append(f"LOW GSR: {data['gsr']} <= {GSR_LOW}")
             
         if day_move >= GSR_MOVE_PCT:
-            alerts.append(f"⚡ VOLATILITY ALERT: GSR moved {day_move:.2f}% in 24h")
+            alerts.append(f"VOLATILITY: Moved {day_move:.2f}% in 24h")
             
         if isinstance(metrics["z_score"], float) and abs(metrics["z_score"]) >= GSR_Z:
-            alerts.append(f"📊 Z-SCORE ALERT: 60d Z-score is {metrics['z_score']}")
+            alerts.append(f"Z-SCORE TRIGGER: {metrics['z_score']}σ")
             
         if alerts:
-            alert_msg = "🚨 *GSR ALERT TRIGGERED*\n\n" + "\n".join(alerts) + "\n\n" + msg
+            alert_header = " | ".join(alerts)
+            alert_msg = build_message(data, metrics, alert_header=alert_header)
             send_telegram_message(alert_msg)
+        else:
+            print("[INFO] Check completed. No threshold triggers met.")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
