@@ -1,0 +1,37 @@
+name: GSR Bot Scheduler
+
+on:
+  schedule:
+    # Runs every 3 hours (Note: GitHub cron uses UTC time)
+    - cron: '0 4,16 * * *'
+  workflow_dispatch: # Allows you to run it manually from GitHub anytime
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install yfinance pandas requests
+
+      - name: Run GSR Bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python gsr_bot.py check
+
+      - name: Commit and push history updates (optional)
+        # This keeps your history.json updated in your repo across runs
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Auto-update GSR history"
+          file_pattern: history.json
